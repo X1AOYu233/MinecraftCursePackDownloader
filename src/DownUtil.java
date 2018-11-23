@@ -1,188 +1,157 @@
-import java.io.BufferedInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.net.HttpURLConnection;
-import java.net.ProtocolException;
 import java.net.URL;
-import java.util.Objects;
 
+/**
+ * 多线程下载模型
+ *
+ * @author bridge
+ */
 public class DownUtil {
-    //定义已完成的线程数
-    static int finishedThreadNum;
-    // 定义下载资源的路径
-    private String path;
-    // 定义需要使用多少线程下载资源
-    private int threadNum;
-    // 定义下载的线程对象
-    private DownThread[] threads;
-    private URL url;
-    //定义下载到的目录
-    private String targetPath;
-    //定义文件名
-    private String fileName;
+    /**
+     * 线程计数同步辅助
+     */
 
-    DownUtil(String path, int threadNum, String targetPath) {
-        this.path = path;
-        this.threadNum = threadNum;
-        // 初始化threads数组
-        threads = new DownThread[threadNum];
-        this.targetPath = targetPath;
+    static int finishedThreadNum = 0;
+    /**
+     * 同时下载的线程数
+     */
+    private int threadCount;
+    /**
+     * 服务器请求路径
+     */
+    private String serverPath;
+    /**
+     * 本地路径
+     */
+    private String localPath;
+
+
+    DownUtil(int threadCount, String serverPath, String downloadPath) throws IOException {
+        this.threadCount = threadCount;
+        this.serverPath = serverPath;
+        this.localPath = downloadPath + getFileName(serverPath);
+
     }
 
-    void download() throws Exception {
-        url = new URL(path);
-        // 指定所下载的文件的保存位置
-        fileName = getFileName();
-        String targetFile = targetPath + fileName;
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        setRequestProperty(conn);
-        // 得到文件大小
-        // 定义下载的文件的总大小
-        long fileSize = conn.getContentLengthLong();
-        System.out.println(conn.getContentLengthLong());
-        conn.disconnect();
-        long currentPartSize = fileSize / threadNum + 1;
-        RandomAccessFile file = new RandomAccessFile(targetFile, "rw");
-        // 设置本地文件的大小
-        try {
-            file.setLength(fileSize);
-        }catch (IOException e){
-            System.out.println(e.getMessage() + ":" + fileSize);
-            finishedThreadNum++;
-            Main.addErrorInfo("文件指针错误："  + e.getMessage() + "指针位置：" + fileSize + "当前下载地址" + path+"\n");
-        }
-        file.close();
-        for (int i = 0; i < threadNum; i++) {
-            // 计算每条线程的下载的开始位置
-            long startPos = i * currentPartSize;
-            // 每个线程使用一个RandomAccessFile进行下载
-            RandomAccessFile currentPart = new RandomAccessFile(targetFile, "rw");
-            // 定位该线程的下载位置
-            currentPart.seek(startPos);
-            // 创建下载线程
-            threads[i] = new DownThread(startPos, currentPartSize, currentPart);
-            // 启动下载线程
-            threads[i].start();
-        }
-    }
 
-    // 获取下载的完成百分比
-    public boolean isComplete() {
-        return finishedThreadNum == threadNum;
-    }
-
-    private String getFileName() throws IOException {
+    private String getFileName(String url) throws IOException {
         String filename = null;
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         conn.connect();
-        if (conn.getResponseCode() == 200) {
-            String file = conn.getURL().getFile();
-            System.out.println(file);
-            try {
-                filename = file.substring(file.lastIndexOf('/') + 1);
-            }catch (Exception ignored){}
+        conn.getHeaderField(0);
+        String file = conn.getURL().getFile();
+        try {
+            filename = file.substring(file.lastIndexOf('/') + 1);
+            System.out.println(filename);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        if (file.substring(file.lastIndexOf('/') + 1).lastIndexOf(".") == -1 | filename == null) {
+            Main.addErrorInfo("文件名获取失败，该文件可能已被删除,当前文件地址:" + conn.getURL().toString());
         }
         return filename;
     }
 
-    private void setRequestProperty(HttpURLConnection conn) throws ProtocolException {
-        conn.setConnectTimeout(5 * 1000);
-        conn.setRequestMethod("GET");
-        conn.setRequestProperty("Accept-Language", "en-US");
-        conn.setRequestProperty("Charset", "UTF-8");
+    void executeDownLoad() {
+
+        try {
+            URL url = new URL(serverPath);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            int code = conn.getResponseCode();
+            if (code == 200) {
+                //服务器返回的数据的长度，实际上就是文件的长度,单位是字节
+                int length = conn.getContentLength();
+                //分割文件
+                int blockSize = length / threadCount;
+                new RandomAccessFile(localPath, "rwd").setLength(length);
+                for (int threadId = 1; threadId <= threadCount; threadId++) {
+                    //第一个线程下载的开始位置
+                    int startIndex = (threadId - 1) * blockSize;
+                    int endIndex = startIndex + blockSize - 1;
+                    if (threadId == threadCount) {
+                        //最后一个线程下载的长度稍微长一点
+                        endIndex = length;
+                    }
+                    new DownLoadThread(startIndex, endIndex).start();
+                }
+
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
     }
 
-    private class DownThread extends Thread {
-        // 定义已经该线程已下载的字节数
-        public int length;
-        // 当前线程的下载位置
-        private long startPos;
-        // 定义当前线程负责下载的文件大小
-        private long currentPartSize;
-        // 当前线程需要下载的文件块
-        private RandomAccessFile currentPart;
+    /**
+     * 内部类用于实现下载
+     */
+    @SuppressWarnings("ResultOfMethodCallIgnored")
+    public class DownLoadThread extends Thread {
+        /**
+         * 下载起始位置
+         */
+        private int startIndex;
+        /**
+         * 下载结束位置
+         */
+        private int endIndex;
+        private int hasRead;
 
-        DownThread(long startPos, long currentPartSize, RandomAccessFile currentPart) {
-            this.startPos = startPos;
-            this.currentPartSize = currentPartSize;
-            this.currentPart = currentPart;
+        DownLoadThread(int startIndex, int endIndex) {
+            this.startIndex = startIndex;
+            this.endIndex = endIndex;
+
         }
+
 
         @Override
         public void run() {
+
             try {
+                URL url = new URL(serverPath);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                BufferedInputStream inStream = null;
-                try {
-                    inStream = new BufferedInputStream(conn.getInputStream());
-                } catch (IOException e) {
-                    String msg = e.getMessage();
-                    try {
-                        System.out.println(msg);
-                        conn = (HttpURLConnection) new URL(msg.substring(msg.indexOf("https"), msg.lastIndexOf(".jar")).replace(" ", "%20") + ".jar").openConnection();
-                        fileName = msg.substring(msg.lastIndexOf("/"), msg.lastIndexOf(".jar")).replace(" ", "%20") + ".jar";
-                        currentPart = new RandomAccessFile(targetPath + fileName, "rw");
-                        inStream = new BufferedInputStream(conn.getInputStream());
-                    } catch (StringIndexOutOfBoundsException e1) {
-                        finishedThreadNum++;
-                        if (msg.equalsIgnoreCase("Remote host closed connection during handshake")) {
-                            Main.addErrorInfo("远程主机在TLS握手时关闭了连接:" + msg + "出错文件名：" + fileName + "\n");
-                            this.stop();
-                        }
-                        if (msg.equalsIgnoreCase("Connection reset")){
-                            Main.addErrorInfo("下载失败，连接已被重置,当前下载地址：" + path + "出错文件名：" + fileName + "\n");
-                            this.stop();
-                        }
-                        if (msg.equalsIgnoreCase("Connection timed out: connect")){
-                            Main.addErrorInfo("下载失败，连接超时，当前下载地址："+ path);
-                            this.stop();
-                        }
-                        if (inStream == null) {
-                            Main.addErrorInfo("无法下载文件，可能文件已不存在,当前下载地址：" + path + "出错模组名：" + msg.substring(msg.indexOf("projects/")+"projects/".length(), msg.lastIndexOf("/files")) + "\n");
-                            this.stop();
-                        }
-                        if (fileName == null ){
-                            System.err.println("Error in getting file name");
-                            Main.addErrorInfo("无法获取文件名，下载地址：" + path + "\n");
-                            this.stop();
-                        }
-                        //noinspection ConstantConditions
-
-                    }
+                //请求服务器下载部分的文件的指定位置
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(10000);
+                InputStream is = conn.getInputStream();//返回资源
+                RandomAccessFile raf = new RandomAccessFile(localPath, "rwd");
+                raf.seek(startIndex);
+                byte[] buffer = new byte[endIndex - startIndex];
+                is.skip(startIndex);
+                while ((hasRead = is.read(buffer)) != -1) {
+                    raf.write(buffer, 0, hasRead);
                 }
 
-                // 跳过startPos个字节，表明该线程只下载自己负责哪部分文件。
-                try {
-                    //noinspection ResultOfMethodCallIgnored
-                    Objects.requireNonNull(inStream).skip(this.startPos);
-                } catch (NullPointerException ignored) {
-                }catch (IOException e){
-                    finishedThreadNum++;
-                    Main.addErrorInfo("移动文件指针出错："  + e.getMessage() + "指针位置：" + startPos + ",当前文件名：" + fileName + ",下载地址：" + path + "\n");
-                    this.interrupt();
+
+//                ReadableByteChannel channel = Channels.newChannel(is);
+//                FileChannel fileChannel = raf.getChannel();
+//                fileChannel.position(startIndex);
+//                fileChannel.transferFrom(channel,startIndex,endIndex-startIndex);
+//                System.out.println("当前位置："+fileChannel.position());
+                //随机写文件的时候从哪个位置开始写
+                is.close();
+                raf.close();
+//                fileChannel.close();
+                addfinishedThreadNum();
+            } catch (IOException throwable) {
+                throwable.printStackTrace();
+                addfinishedThreadNum();
+                if (throwable.getMessage().equalsIgnoreCase("connect timed out")) {
+                    Main.addErrorInfo("连接超时,无法获取文件,当前下载地址：" + serverPath);
                 }
 
-                byte[] buffer = new byte[1024];
-                int hasRead;
-                // 读取网络数据，并写入本地文件
-                //noinspection ConstantConditions
-                while (length < currentPartSize && (hasRead = inStream.read(buffer)) != -1) {
-                    currentPart.write(buffer, 0, hasRead);
-                    // 累计该线程下载的总大小
-                    length += hasRead;
-                }
-                currentPart.close();
-                Objects.requireNonNull(inStream).close();
-                finishedThreadNum++;
-            } catch (Exception e) {
-                e.printStackTrace();
             }
+
         }
+
+
+    }
+
+    private synchronized void addfinishedThreadNum() {
+        finishedThreadNum++;
     }
 }
-
-
-
-
-

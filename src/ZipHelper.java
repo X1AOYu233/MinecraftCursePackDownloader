@@ -5,16 +5,14 @@ import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
-public class ZipHelper {
+class ZipHelper {
     /**
      * 解压文件
      * @param zipFile 目标文件
      * @param descDir 指定解压目录
      * @param urlList 存放解压后的文件目录（可选）
-     * @return 返回是否已解压zip
      */
-    static public boolean unZip(File zipFile, String descDir, List<String> urlList) {
-        boolean flag = false;
+    static void unZip(File zipFile, String descDir, List<String> urlList) {
         File pathFile = new File(descDir);
         if(!pathFile.exists()){
             //noinspection ResultOfMethodCallIgnored
@@ -51,12 +49,10 @@ public class ZipHelper {
                 in.close();
                 out.close();
             }
-            flag = true;
             //必须关闭，否则无法删除该zip文件
             zip.close();
         } catch (IOException e) {
             e.printStackTrace();
         }
-        return flag;
     }
 }
