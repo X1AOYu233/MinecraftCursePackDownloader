@@ -161,7 +161,9 @@ public class Main extends JFrame {
         zipFileChooser.setFileSystemView(FileSystemView.getFileSystemView());
         zipFileChooser.setFont(defaultfont);
         zipFileChooser.setDialogTitle("选择整合包");
-        zipFileChooser.setCurrentDirectory(FileSystemView.getFileSystemView().getHomeDirectory());
+        try{
+            zipFileChooser.setCurrentDirectory(FileSystemView.getFileSystemView().getHomeDirectory());
+        }catch(Exception ignored){}
 
 
 
